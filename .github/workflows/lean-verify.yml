@@ -17,24 +17,57 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install elan
+      - name: Install elan with SHA-256 verification
         shell: bash
+        env:
+          ELAN_VERSION: "4.2.3"
+          ELAN_SHA256: "df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2"
         run: |
           set -euo pipefail
-          curl -sSfL \
-            https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz \
-            | tar xz
+
+          ARCHIVE="elan-x86_64-unknown-linux-gnu.tar.gz"
+          URL="https://github.com/leanprover/elan/releases/download/v${ELAN_VERSION}/${ARCHIVE}"
+
+          echo "== Download elan =="
+          curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            "$URL" \
+            --output "$ARCHIVE"
+
+          echo "== Verify elan SHA-256 =="
+          echo "${ELAN_SHA256}  ${ARCHIVE}" | sha256sum --check --strict
+
+          echo "== Install elan =="
+          tar -xzf "$ARCHIVE"
           ./elan-init -y --default-toolchain none
+
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Install pinned Lean toolchain
         shell: bash
         run: |
           set -euo pipefail
-          elan toolchain install "$(cat lean-toolchain)"
-          lean --version
+
+          TOOLCHAIN="$(tr -d '\r\n' < lean-toolchain)"
+          echo "Pinned toolchain: ${TOOLCHAIN}"
+
+          elan toolchain install "$TOOLCHAIN"
+
+          echo "== Active Lean version =="
+          LEAN_VERSION="$(lean --version)"
+          echo "$LEAN_VERSION"
+
+          if ! grep -q 'Lean (version 4\.33\.1' <<< "$LEAN_VERSION"; then
+            echo "ERROR: expected Lean 4.33.1."
+            exit 1
+          fi
 
       - name: Verify Lean source
         shell: bash
@@ -42,19 +75,34 @@ jobs:
           set -euo pipefail
 
           FILE="PhysicalAIPublicRealization.lean"
+          OUTPUT="lean-verification-output.txt"
+
+          test -f "$FILE"
 
           echo "== Check proof placeholders =="
           if grep -nE '(^|[^A-Za-z0-9_])(sorry|admit)([^A-Za-z0-9_]|$)' "$FILE"; then
-            echo "ERROR: proof placeholder found"
+            echo "ERROR: proof placeholder found."
             exit 1
           fi
 
-          echo "== Lean kernel verification =="
-          lean "$FILE" 2>&1 | tee lean-output.txt
+          echo "== Check explicit axiom declarations =="
+          if grep -nE '^[[:space:]]*(axiom|axioms)[[:space:]]+' "$FILE"; then
+            echo "ERROR: explicit axiom declaration found."
+            exit 1
+          fi
 
-          echo "== Check sorryAx =="
-          if grep -q 'sorryAx' lean-output.txt; then
-            echo "ERROR: sorryAx dependency found"
+          echo "== Lean kernel verification and axiom audit =="
+          lean "$FILE" 2>&1 | tee "$OUTPUT"
+
+          echo "== Require empty axiom dependencies =="
+          if grep -q 'depends on axioms:' "$OUTPUT"; then
+            echo "ERROR: at least one audited theorem depends on axioms."
+            grep 'depends on axioms:' "$OUTPUT" || true
+            exit 1
+          fi
+
+          if grep -q 'sorryAx' "$OUTPUT"; then
+            echo "ERROR: sorryAx dependency found."
             exit 1
           fi
 
