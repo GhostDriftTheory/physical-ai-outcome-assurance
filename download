@@ -1,0 +1,14 @@
+# Lean generated artifacts
+*.olean
+*.ilean
+*.c
+*.o
+
+# Local verification output
+lean-verification-output.txt
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
