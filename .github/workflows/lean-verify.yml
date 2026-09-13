@@ -19,13 +19,34 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install pinned Lean toolchain
+      - name: Install Lean
         uses: leanprover/lean-action@v1
         with:
           auto-config: false
           use-github-cache: false
           use-mathlib-cache: false
 
-      - name: Run verification
+      - name: Verify Lean source
         shell: bash
-        run: bash scripts/verify.sh
+        run: |
+          set -euo pipefail
+
+          echo "== Lean version =="
+          lean --version
+
+          echo "== Check proof placeholders =="
+          if grep -nE '(^|[^A-Za-z0-9_])(sorry|admit)([^A-Za-z0-9_]|$)' PhysicalAIPublicRealization.lean; then
+            echo "ERROR: proof placeholder found"
+            exit 1
+          fi
+
+          echo "== Lean kernel verification =="
+          lean PhysicalAIPublicRealization.lean 2>&1 | tee lean-output.txt
+
+          echo "== Check sorryAx =="
+          if grep -q 'sorryAx' lean-output.txt; then
+            echo "ERROR: sorryAx dependency found"
+            exit 1
+          fi
+
+          echo "Lean verification completed successfully."
